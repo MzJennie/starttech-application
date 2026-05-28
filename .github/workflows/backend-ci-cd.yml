@@ -1,0 +1,151 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches:
+      - feature/full-stack
+    paths:
+      - 'Server/**'
+  pull_request:
+    branches:
+      - feature/full-stack
+    paths:
+      - 'Server/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: starttech-backend
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: Server/MuchToDo/go.sum
+
+      - name: Install dependencies
+        working-directory: Server/MuchToDo
+        run: go mod download
+
+      - name: Run tests
+        working-directory: Server/MuchToDo
+        run: go test ./... -v
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          DB_NAME: much_todo_db
+          JWT_SECRET_KEY: test-secret-key
+          PORT: "8080"
+
+      - name: Run vulnerability scan
+        working-directory: Server/MuchToDo
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+        continue-on-error: true
+
+  build:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        working-directory: Server/MuchToDo
+        run: |
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }} .
+          docker tag ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }} \
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Scan Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+          format: table
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+
+      - name: Push to ECR
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/feature/full-stack' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to ASG via rolling update
+        run: |
+          ASG_NAME="starttech-asg"
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences '{"MinHealthyPercentage": 50, "InstanceWarmup": 60}'
+
+      - name: Wait for deployment
+        run: |
+          ASG_NAME="starttech-asg"
+          echo "Waiting for instance refresh to complete..."
+          while true; do
+            STATUS=$(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name $ASG_NAME \
+              --query 'InstanceRefreshes[0].Status' \
+              --output text)
+            echo "Status: $STATUS"
+            if [ "$STATUS" = "Successful" ]; then
+              echo "Deployment successful!"
+              break
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "Deployment failed!"
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Smoke test
+        run: |
+          sleep 30
+          curl -f http://${{ secrets.ALB_DNS_NAME }}/health || exit 1
+          echo "Smoke test passed!"
