@@ -1,0 +1,8 @@
+.git
+*.md
+.env
+evidence/
+kubernetes/
+scripts/
+go1.24.3.linux-amd64.tar.gz
+mongodb.key
