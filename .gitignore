@@ -36,3 +36,4 @@ docker-compose.test.yaml
 mongodb.key
 mongo-keyfile
 
+session-manager-plugin.deb
