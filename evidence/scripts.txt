@@ -1,0 +1,7 @@
+total 24
+drwxrwxr-x 2 vagrant vagrant 4096 May 28 22:25 .
+drwxrwxr-x 8 vagrant vagrant 4096 May 29 07:39 ..
+-rwxrwxr-x 1 vagrant vagrant  799 May 28 22:31 deploy-backend.sh
+-rwxrwxr-x 1 vagrant vagrant  673 May 28 22:31 deploy-frontend.sh
+-rwxrwxr-x 1 vagrant vagrant  596 May 28 22:31 health-check.sh
+-rwxrwxr-x 1 vagrant vagrant  652 May 28 22:58 rollback.sh

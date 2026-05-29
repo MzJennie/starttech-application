@@ -1,0 +1,5 @@
+total 20
+drwxrwxr-x 2 vagrant vagrant 4096 May 28 22:25 .
+drwxrwxr-x 3 vagrant vagrant 4096 May 28 22:25 ..
+-rw-rw-r-- 1 vagrant vagrant 4577 May 28 22:30 backend-ci-cd.yml
+-rw-rw-r-- 1 vagrant vagrant 2555 May 28 22:29 frontend-ci-cd.yml
